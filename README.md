@@ -1,4 +1,4 @@
-## CMPT 371 – Mini Project 1: Simple Web Server Project
+## CMPT 371 Mini Project 1: Simple Web Server 
 
 This repository contains the implementation of a minimal HTTP web server written in Python for CMPT 371 (Computer Networks). The server is built from scratch using socket programming (no http.server or other high-level HTTP libraries).
 
@@ -27,7 +27,7 @@ cd CMPT371-MP1
 3. Start the server:
 
 ```
-python server.py
+python3 server.py
 ```
 
 By default, the server listens on `127.0.0.1:8080`. You can change the host/port in `server.py` if needed.
@@ -71,7 +71,7 @@ All project documentation (requirements, design notes, and reports) is stored in
 
 > [!WARNING]  
 > DO NOT SHARE REPO LINK:
-https://1sfu-my.sharepoint.com/:f:/g/personal/hccheung_sfu_ca/EhXuUQntbspIpA6dXq50MMgBR2rVAXpNZdv7SmHtdBoSvg?e=pMD6lD
+> https://1sfu-my.sharepoint.com/:f:/g/personal/hccheung_sfu_ca/EhXuUQntbspIpA6dXq50MMgBR2rVAXpNZdv7SmHtdBoSvg?e=pMD6lD
 
 ## Contributors
 Eric Cheung, Harry Kim
