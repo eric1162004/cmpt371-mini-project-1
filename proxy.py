@@ -14,8 +14,8 @@ Otherwise, it updates the cache with the new content and forwards the updated re
 Multithreading is used to handle concurrent client connections.
 
 Usage:
-- Run the server: `python3 server.py`
-- Run the proxy: `python3 proxy.py`
+1. Run the server: `python3 server.py`
+2. Run the proxy: `python3 proxy.py`
 
 © 2025 Eric Cheung, Harry Kim. All rights reserved.
 """
@@ -73,9 +73,10 @@ STATUS = {
 # In-memory cache: {filename: {"last_modified": str, "content": bytes}}
 cache = {}
 
+
 def createResponse(statusCode, body=b""):
     # Build the HTTP status line
-    statusLine = f"{VERSION} {statusCode} {STATUS[statusCode]['title']}\r\n"
+    statusLine = f"{VERSION} {statusCode} {STATUS[statusCode]['title']}"
 
     # Initialize headers dictionary
     headers = {}
@@ -91,30 +92,48 @@ def createResponse(statusCode, body=b""):
     headerLines = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
 
     # Combine status line + headers + CRLF separator
-    head = f"{statusLine}{headerLines}\r\n".encode("utf-8")
+    head = f"{statusLine}\r\n{headerLines}\r\n"
 
     # Return as bytes: headers + body
-    return head + body
+    return head.encode("utf-8") + body
+
 
 def handle200(filename, response):
+    # Split the raw response into headers and body
     headers, body = response.split(b"\r\n\r\n", 1)
+
     lastModified = None
+
+    # Search through headers for a "Last-Modified" field
     for line in headers.split(b"\r\n"):
         if line.lower().startswith(b"last-modified:"):
+            # Extract the timestamp value and decode from bytes to string
             lastModified = line.split(b": ", 1)[1].decode()
             break
+
+    # If no Last-Modified header was found, use the current GMT time
     lastModified = lastModified or formatdate(timeval=None, usegmt=True)
+
+    # Update the cache with the new content and last modified time
     cache[filename] = {"last_modified": lastModified, "content": body}
+
+    # Return a 200 OK response with the body
     return createResponse(200, body)
 
+
 def handle304(filename):
+    # Retrieve the cached content for the filename
     cached = cache[filename]
+
+    # Return a 200 OK response with the cached content
     return createResponse(200, cached["content"])
+
 
 def handle505():
     # Return a 505 HTTP Version Not Supported response with the predefined HTML body
     msg = STATUS[505]["body"].encode()
     return createResponse(505, msg)
+
 
 def handle500(error):
     msg = STATUS[500]["body"]
@@ -126,21 +145,27 @@ def handle500(error):
     # Return a 500 Internal Server Error response with details
     return createResponse(500, msg)
 
+
 def createRequest(headers, cached=None):
     # Builds the proxy request string with optional cache headers.
     if cached:
         headers.append(f"If-Modified-Since: {cached['last_modified']}")
     return "\r\n".join(headers) + "\r\n"
 
+
 def receiveResponse(serverSocket):
     # Receives the full response from the server socket.
     response = b""
+    
+    # Keep receiving data until the server closes the connection
     while True:
         chunk = serverSocket.recv(4096)
         if not chunk:
             break
         response += chunk
+        
     return response
+
 
 def sendRequest(request):
     # Sends the request to the server and returns the raw response.
@@ -148,6 +173,7 @@ def sendRequest(request):
         serverSocket.connect((SERVER_HOST, SERVER_PORT))
         serverSocket.sendall(request.encode())
         return receiveResponse(serverSocket)
+
 
 def handleRequest(request):
     try:
@@ -158,27 +184,30 @@ def handleRequest(request):
         # The first line of an HTTP request is the request line: METHOD PATH VERSION
         # Example: "GET /index.html HTTP/1.1"
         method, path, version = lines[0].split()
-        
+
         if version != VERSION:
             return handle505()
-        
+
+        # Only handle GET requests
         headers = [
             f"GET {path} {VERSION}",
         ]
-        
+
         # handle "/" by serving DEAULT_FILE
         if path == "/" or path == "":
             path = DEFAULT_FILE
-            
+
         # Remove leading "/" from path to get the filename
         fileName = path.lstrip("/")
         cached = cache.get(fileName)
 
+        # Create the request to send to the origin server
         proxyRequest = createRequest(headers, cached)
         response = sendRequest(proxyRequest)
-            
+
+        # Parse the status code from the response
         statusLine = response.split(b"\r\n")[0].decode()
-        statusCode = int(statusLine.split()[1]) # split at space
+        statusCode = int(statusLine.split()[1])  # split at space
 
         if statusCode == 200:
             return handle200(fileName, response)
@@ -186,7 +215,7 @@ def handleRequest(request):
             return handle304(fileName)
         else:
             return response
-        
+
     except Exception as e:
         return handle500(e)
 
@@ -194,6 +223,7 @@ def handleRequest(request):
 def handleClient(conn, addr):
     with conn:
         try:
+            # Receive the client's request (up to 4096 bytes)
             request = conn.recv(4096).decode()
 
             print(f"[{addr}] Request:\n{request}")
@@ -211,15 +241,21 @@ def startProxy():
         # without waiting for the OS to release it.
         p.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+        # Bind the proxy to the specified host and port
         p.bind((PROXY_HOST, PROXY_PORT))
+
+        # Start listening for incoming connections
         p.listen()
 
         print(f"Proxy started at http://{PROXY_HOST}:{PROXY_PORT}")
 
         while True:
+            # Accept a new client connection
             conn, addr = p.accept()
+            # Handle the client connection in a new thread
             threading.Thread(target=handleClient, args=(conn, addr)).start()
 
 
+# Start the proxy server when this script is run directly
 if __name__ == "__main__":
     startProxy()
