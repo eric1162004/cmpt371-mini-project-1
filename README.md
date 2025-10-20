@@ -45,7 +45,7 @@ http://127.0.0.1:8080/test.html
 ```
 If successful, you should see the contents of test.html.
 
-### Using curl
+### Using Terminal Commands
 
 You can simulate different requests and verify status codes:
 
@@ -56,7 +56,7 @@ curl -v http://127.0.0.1:8080/test.html
 # 404 Not Found
 curl -v http://127.0.0.1:8080/missing.html
 
-# 403 Forbidden (if you configure a restricted file)
+# 403 Forbidden
 curl -v http://127.0.0.1:8080/private.html
 
 # 304 Not Modified

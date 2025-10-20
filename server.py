@@ -49,6 +49,9 @@ VERSION = "HTTP/1.1"
 # The default file to serve when the root path "/" is requested
 DEFAULT_FILE = "test.html"
 
+# The private file that should return 403 Forbidden when accessed
+PRVIATE_FILE = "private.html"
+
 # Mapping of HTTP status codes to their titles and HTML bodies
 STATUS = {
     200: {"title": "OK", "body": None},
@@ -105,11 +108,14 @@ def handle304(filePath, headerLine):
     )
     # Get the file's last modification time (UTC)
     fileLastModifiedTime = datetime.utcfromtimestamp(os.path.getmtime(filePath))
-
+    
     # If the file has not been modified since the client's cached version,
     # return a 304 Not Modified response
+    # NOTE: Else ther server will continue to serve the file with 200 OK
     if fileLastModifiedTime <= clientTime:
         return createResponse(304)
+    
+    # print("File has been modified since client's cached version.")
 
 
 def handle403():
@@ -162,7 +168,7 @@ def handleRequest(request):
         print(f"Requested file path: {filePath}")
 
         # If the client is trying to access a restricted file, deny access with 403 Forbidden
-        if fileName == "private.html":
+        if fileName == PRVIATE_FILE:
             return handle403()
 
         # If the requested file does not exist on the server, return 404 Not Found
@@ -173,7 +179,9 @@ def handleRequest(request):
         # If present, delegate to handle304() to determine if the file has changed
         for line in lines[1:]:
             if line.startswith("If-Modified-Since:"):
-                return handle304(filePath, line)
+                response = handle304(filePath, line)
+                if response:
+                    return response
 
         # If none of the above conditions triggered, serve the file with a 200 OK response
         return handle200(filePath)
