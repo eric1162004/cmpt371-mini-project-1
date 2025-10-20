@@ -13,10 +13,10 @@ Modular handler functions are used to encapsulate response logic for each status
 The server reads static files from the local directory and supports conditional requests
 via the 'If-Modified-Since' header.
 
+Multithreading is used to handle concurrent client connections. 
+
 Usage:
-- Place HTML files (e.g., test.html, private.html) in the same directory.
-- Run the server: `python server.py`
-- Test using curl, browser, or telnet.
+- Run the server: `python3 server.py`
 
 © 2025 Eric Cheung, Harry Kim. All rights reserved.
 """
@@ -26,6 +26,9 @@ import socket
 
 # For filesystem operations (e.g., joining paths, checking file existence, getting modification times)
 import os
+
+# For serving multiple clients concurrently.
+import threading
 
 # For parsing and comparing HTTP date headers (e.g., If-Modified-Since)
 from datetime import datetime
@@ -108,13 +111,13 @@ def handle304(filePath, headerLine):
     )
     # Get the file's last modification time (UTC)
     fileLastModifiedTime = datetime.utcfromtimestamp(os.path.getmtime(filePath))
-    
+
     # If the file has not been modified since the client's cached version,
     # return a 304 Not Modified response
     # NOTE: Else ther server will continue to serve the file with 200 OK
     if fileLastModifiedTime <= clientTime:
         return createResponse(304)
-    
+
     # print("File has been modified since client's cached version.")
 
 
@@ -152,7 +155,7 @@ def handleRequest(request):
         # The first line of an HTTP request is the request line: METHOD PATH VERSION
         # Example: "GET /index.html HTTP/1.1"
         method, path, version = lines[0].split()
-        
+
         # handle "/" by serving DEAULT_FILE
         if path == "/" or path == "":
             path = DEFAULT_FILE
@@ -192,6 +195,26 @@ def handleRequest(request):
         return handle500(e)
 
 
+def handleClient(conn, addr):
+    # Get the current thread ID for logging purposes
+    thread_id = threading.get_ident()
+    print(f"[Thread {thread_id}] Handling connection from {addr}")
+    
+    with conn:
+        # Receive up to 1024 bytes of data from the client
+        # Decode from bytes to string (assuming UTF-8 by default)
+        request = conn.recv(1024).decode()
+
+        print(f"Request from {addr}:\n{request}")
+
+        # Pass the request string to a handler function
+        # handleRequest() should return a response string
+        response = handleRequest(request)
+
+        # Send the response back to the client, encoded as bytes
+        conn.sendall(response.encode())
+
+
 def startServer():
     # Create a TCP/IP socket using IPv4 addressing
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -208,19 +231,10 @@ def startServer():
         # Continuously accept and handle client requests
         while 1:
             conn, addr = s.accept()
-            with conn:
-                # Receive up to 1024 bytes of data from the client
-                # Decode from bytes to string (assuming UTF-8 by default)
-                request = conn.recv(1024).decode()
-
-                print(f"Request from {addr}:\n{request}")
-
-                # Pass the request string to a handler function
-                # handleRequest() should return a response string
-                response = handleRequest(request)
-
-                # Send the response back to the client, encoded as bytes
-                conn.sendall(response.encode())
+            
+            # Spawn threads to handle multiple clients concurrently
+            thread = threading.Thread(target=handleClient, args=(conn, addr))
+            thread.start()
 
 
 # Ensures that code only runs when the file is executed directly
