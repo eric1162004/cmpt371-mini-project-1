@@ -54,7 +54,7 @@ SERVER_PORT = 8080
 VERSION = "HTTP/1.1"
 
 # Socket receive buffer size
-SOCKET_RECV_BUFFER_SIZE = 4096
+SOCKET_RECV_BUFFER_SIZE = 1024
 
 # The default file to serve when the root path "/" is requested
 DEFAULT_FILE = "test.html"
@@ -158,7 +158,7 @@ def createRequest(headers, cached=None):
     # Builds the proxy request string with optional cache headers.
     if cached:
         headers.append(f"If-Modified-Since: {cached['last_modified']}")
-    return "\r\n".join(headers) + "\r\n"
+    return "\r\n".join(headers) + "\r\n\r\n"
 
 
 # def receiveResponse(serverSocket):

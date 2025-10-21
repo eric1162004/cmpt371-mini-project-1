@@ -56,7 +56,7 @@ DEFAULT_FILE = "test.html"
 PRVIATE_FILE = "private.html"
 
 # The maximum chunk size for framed responses
-MAX_CHUNK_SIZE = 512
+MAX_CHUNK_SIZE = 1024
 
 # Socket receive buffer size
 SOCKET_RECV_BUFFER_SIZE = 4096
@@ -156,7 +156,6 @@ def handleRequest(request):
     try:
         # Split the raw HTTP request into lines using CRLF
         lines = request.split("\r\n")
-        print(f"Request lines: {lines}")
 
         # The first line of an HTTP request is the request line: METHOD PATH VERSION
         # Example: "GET /index.html HTTP/1.1"
@@ -224,22 +223,23 @@ def extractStreamIdAndCleanRequest(request):
 
 
 def sendFramedResponse(conn, stream_id, response, lock):
-    chunk_size = MAX_CHUNK_SIZE
-
-    # Iterate over the response in increments of chunk_size
-    for i in range(0, len(response), chunk_size):
+    # Iterate over the response in increments of chunk size
+    for i in range(0, len(response), MAX_CHUNK_SIZE):
         # Extract the current chunk of data
-        chunk = response[i : i + chunk_size]
+        chunk = response[i : i + MAX_CHUNK_SIZE]
 
         # Determine if this is the final chunk (1 = end, 0 = more to come)
-        end_stream = int(i + chunk_size >= len(response))
+        end_stream = int(i + MAX_CHUNK_SIZE >= len(response))
 
         # Construct the frame with stream ID, end flag, and chunk payload
         frame = f"{stream_id}|{end_stream}|{chunk}"
 
         # Send the encoded frame over the socket
-        with lock:
-            conn.sendall(frame.encode())
+        try:
+            with lock:
+                conn.sendall(response.encode())
+        except (BrokenPipeError, OSError) as e:
+            print(f"[Thread {threading.get_ident()}] Failed to send response: {e}")
 
 
 def sendRegularResponse(conn, response, lock):
@@ -247,11 +247,9 @@ def sendRegularResponse(conn, response, lock):
         conn.sendall(response.encode())
 
 
-def handleRequestThread(conn, request):
-    # Get the current thread ID for logging purposes
-    thread_id = threading.get_ident()
-    print(f"[Thread {thread_id}] Handling connection from client")
-    
+def handleRequestThread(conn, request, lock):
+    print(request)
+
     # Extract stream ID (if present) and clean the request for processing
     streamId, requestClean = extractStreamIdAndCleanRequest(request)
 
@@ -262,15 +260,21 @@ def handleRequestThread(conn, request):
     # If stream ID exists, use framed response (for multiplexed streams)
     # Otherwise, send a regular HTTP response
     if streamId is not None:
-        sendFramedResponse(conn, streamId, response)
+        sendFramedResponse(conn, streamId, response, lock)
     else:
-        sendRegularResponse(conn, response)
+        sendRegularResponse(conn, response, lock)
 
 
 def handleClient(conn, addr):
     # Get the current thread ID for logging purposes
     thread_id = threading.get_ident()
     print(f"[Thread {thread_id}] Handling connection from {addr}")
+
+    # Create a lock to synchronize access to the shared connection socket.
+    # This prevents race conditions when multiple request-handling threads
+    # attempt to send responses over the same socket concurrently.
+    conn_lock = threading.Lock()
+    threads = []  # Track all spawned request threads
 
     # The socket is automatically closed when the block exits.
     with conn:
@@ -283,7 +287,6 @@ def handleClient(conn, addr):
                 # Exit loop if client closes the connection
                 break
             buffer += data.decode()
-            print(buffer)
 
             # Process all complete requests currently in the buffer
             # HTTP requests are separated by a blank line (CRLF CRLF)
@@ -292,9 +295,15 @@ def handleClient(conn, addr):
                 request, buffer = buffer.split("\r\n\r\n", 1)
 
                 # Dispatch the request to a new thread for independent handling
-                threading.Thread(
-                    target=handleRequestThread, args=(conn, request)
-                ).start()
+                t = threading.Thread(
+                    target=handleRequestThread, args=(conn, request, conn_lock)
+                )
+                t.start()
+                threads.append(t)
+
+        # Wait for all request threads to finish before closing the socket
+        for t in threads:
+            t.join()
 
 
 def startServer():
