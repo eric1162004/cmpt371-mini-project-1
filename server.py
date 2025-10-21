@@ -304,6 +304,8 @@ def handleClient(conn, addr):
         # Wait for all request threads to finish before closing the socket
         for t in threads:
             t.join()
+            
+        print(f"[Thread {thread_id}] Connection from {addr} closed.")
 
 
 def startServer():

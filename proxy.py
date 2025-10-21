@@ -54,7 +54,7 @@ SERVER_PORT = 8080
 VERSION = "HTTP/1.1"
 
 # Socket receive buffer size
-SOCKET_RECV_BUFFER_SIZE = 1024
+SOCKET_RECV_BUFFER_SIZE = 4096
 
 # The default file to serve when the root path "/" is requested
 DEFAULT_FILE = "test.html"
@@ -175,40 +175,54 @@ def createRequest(headers, cached=None):
 #    return response
 
 
+def hasCompleteFrame(buffer):
+    # Check if buffer has at least two '|' delimiters
+    return buffer.count("|") >= 2
+
+
+def extractFrame(buffer):
+    try:
+        sidStr, endStr, rest = buffer.split("|", 2)
+        return f"{sidStr}|{endStr}|{rest}", ""  # Frame isolated, buffer cleared
+    except ValueError:
+        return None, buffer  # Malformed — preserve buffer
+
+
+def parseFrame(frame):
+    try:
+        sidStr, endStr, payload = frame.split("|", 2)
+        return int(sidStr), int(endStr), payload
+    except ValueError:
+        return None, None, None  # Malformed frame
+
+
 def receiveFramedResponse(serverSocket, expectedStreamId):
+    buffer = ""
     responseChunks = []
 
     while True:
-        # Read up to SOCKET_RECV_BUFFER_SIZE bytes from the socket
         chunk = serverSocket.recv(SOCKET_RECV_BUFFER_SIZE)
         if not chunk:
-            # Connection closed by server
             break
+        buffer += chunk.decode()
 
-        try:
-            # Decode the raw bytes into a string frame
-            frame = chunk.decode()
+        while hasCompleteFrame(buffer):
+            frame, buffer = extractFrame(buffer)
+            if not frame:
+                break  # Malformed frame or incomplete — wait for more data
 
-            # Split into stream ID, end flag, and payload
-            sidStr, endStr, payload = frame.split("|", 2)
+            stream_id, end_flag, payload = parseFrame(frame)
+            if stream_id is None:
+                continue  # Skip malformed frame
 
-            # Ignore frames that belong to other streams
-            if int(sidStr) != expectedStreamId:
-                continue
+            if stream_id != expectedStreamId:
+                continue  # Ignore unrelated stream
 
-            # Append this frame's payload to the response buffer
             responseChunks.append(payload)
 
-            # If end flag is set, stop reading further
-            if int(endStr) == 1:
-                break
+            if end_flag == 1:
+                return "".join(responseChunks).encode()
 
-        except ValueError:
-            # If the chunk doesn't match the framing format,
-            # fall back to returning the raw bytes as-is
-            return chunk
-
-    # Join all collected payloads into a single byte string
     return "".join(responseChunks).encode()
 
 
@@ -237,7 +251,6 @@ def handleRequest(request):
     try:
         # Split the raw HTTP request into lines using CRLF
         lines = request.split("\r\n")
-        print(f"Request lines: {lines}")
 
         # The first line of an HTTP request is the request line: METHOD PATH VERSION
         # Example: "GET /index.html HTTP/1.1"
@@ -283,8 +296,6 @@ def handleClient(conn, addr):
         try:
             # Receive the client's request (up to SOCKET_RECV_BUFFER_SIZE)
             request = conn.recv(SOCKET_RECV_BUFFER_SIZE).decode()
-
-            print(f"[{addr}] Request:\n{request}")
 
             response = handleRequest(request)
             conn.sendall(response)
