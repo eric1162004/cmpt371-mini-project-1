@@ -1,53 +1,58 @@
-## CMPT 371 Mini Project 1: Simple Web Server 
+# CMPT 371 – Mini Project 1: HTTP Server & Multiplexed Proxy
 
-This repository contains the implementation of a minimal HTTP web server written in Python for CMPT 371. The server is built from scratch using socket programming (no http.server or other high-level HTTP libraries).
+This repository contains two Python programs developed for CMPT 371:
 
-## Key features:
+- `server.py`: A multithreaded HTTP/1.1 web server built from scratch using raw sockets.
+- `proxy.py`: A multiplexed HTTP/1.1 proxy server that forwards client requests to the origin server using a custom framing protocol.
 
-- Handles basic HTTP/1.1 GET requests.
-- Generates correct responses for the following status codes:
+Both components are designed to demonstrate core networking principles, including socket programming, status code handling, concurrency, and head-of-line (HOL) blocking mitigation.
 
-|Status Code|Title|
-|-----------|-----|
-|200|OK|
-|304|Not Modified|
-|403|forbidden|
-|404|Not Found|
-|505|HTTP Version Not Supported|
+All design specfication and testing evidence are available in the [Project Documentation Repository](https://1sfu-my.sharepoint.com/:f:/g/personal/hccheung_sfu_ca/EhXuUQntbspIpA6dXq50MMgBR2rVAXpNZdv7SmHtdBoSvg).
 
-## How to Run the Server
 
-1. Clone or download this repository.
-2. Navigate into the project directory: 
+## Project Structure
 
-```
-cd CMPT371-MP1
-```
+| File          | Description                                                  |
+|---------------|--------------------------------------------------------------|
+| `server.py`   | Minimal HTTP server supporting GET requests and status codes |
+| `proxy.py`    | Multiplexed proxy server with framing and caching            |
+| `test.html`   | Sample file for successful GET requests                      |
+| `private.html`| Restricted file to trigger 403 Forbidden                     |
+| `README.md`   | Project documentation                                        |
+| `Report.pdf`  | Detailed design and testing report (see OneDrive link below) |
 
-3. Start the server:
+##  How to Run
+
+### 1. Start the Origin Server
 
 ```
 python3 server.py
 ```
+- Default host: `127.0.0.1`
+    
+- Default port: `8080`
+    
 
-By default, the server listens on `127.0.0.1:8080`. You can change the host/port in `server.py` if needed.
-
-## How to Test the Server
-
-### Using a Web Browser
-
-1. Place `test.html` in the same directory as `server.py`.
-
-2. Open your browser and visit:
+### 2. Start the Proxy Server
 
 ```
-http://127.0.0.1:8080/test.html
+python3 proxy.py
 ```
-If successful, you should see the contents of test.html.
 
-### Using Terminal Commands
+- Proxy listens on `127.0.0.1:8081`
+    
+- Forwards requests to origin server at `127.0.0.1:8080`
 
-You can simulate different requests and verify status codes:
+##  Testing Instructions
+
+###  Browser Testing
+
+- Place `test.html` in the same directory.
+    
+- Navigate to: `http://127.0.0.1:8080/test.html` (direct) or configure browser to use proxy at `127.0.0.1:8081` and visit same URL.
+    
+
+###  Terminal Testing
 
 ```
 # 200 OK
@@ -66,12 +71,20 @@ curl -v -H "If-Modified-Since: Wed, 18 Oct 2025 10:00:00 GMT" http://127.0.0.1:8
 printf "GET /test.html HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" | nc 127.0.0.1 8080
 ```
 
-### Accessing Documentation
-All project documentation (requirements, design notes, and reports) is stored in our shared OneDrive folder.
+To test via proxy, add `--proxy 127.0.0.1:8081` to each `curl` command.
 
-> [!WARNING]  
-> DO NOT SHARE REPO LINK:
-> https://1sfu-my.sharepoint.com/:f:/g/personal/hccheung_sfu_ca/EhXuUQntbspIpA6dXq50MMgBR2rVAXpNZdv7SmHtdBoSvg?e=pMD6lD
+## Status Code Coverage
 
-## Contributors
-Eric Cheung, Harry Kim
+|Code|Meaning|Trigger Condition|
+|---|---|---|
+|200|OK|Valid GET for existing file|
+|304|Not Modified|Conditional GET with unchanged file|
+|403|Forbidden|Access to `private.html`|
+|404|Not Found|File not found in base directory|
+|505|HTTP Version Not Supported|Request uses unsupported HTTP version|
+
+## Authors
+
+- Eric Cheung  
+- Harry Kim  
+_Group 26 – October 2025_
