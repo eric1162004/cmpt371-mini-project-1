@@ -217,6 +217,24 @@ def handle500(error):
 
 
 def handleRequest(request):
+    """
+    Processes a raw HTTP/1.1 request and returns an appropriate response.
+
+    This function handles:
+    - Default file serving for root path "/"
+    - HTTP version validation (supports only VERSION)
+    - Access control for restricted files (403)
+    - File existence checks (404)
+    - Conditional GET handling via 'If-Modified-Since' (304)
+    - Standard file serving (200)
+    - Internal error handling (500)
+
+    Args:
+        request (str): Raw HTTP request string received from client.
+
+    Returns:
+        str: HTTP response string based on request validity and file state.
+    """
     try:
         lines = request.split("\r\n")
 
