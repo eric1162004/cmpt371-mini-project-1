@@ -1,4 +1,7 @@
+#### Group 26 - Eric Cheung & Harry Kim  
 # CMPT 371 – Mini Project 1: HTTP Server & Multiplexed Proxy
+
+
 
 This repository contains two Python programs developed for CMPT 371:
 
@@ -82,9 +85,3 @@ To test via proxy, add `--proxy 127.0.0.1:8081` to each `curl` command.
 |403|Forbidden|Access to `private.html`|
 |404|Not Found|File not found in base directory|
 |505|HTTP Version Not Supported|Request uses unsupported HTTP version|
-
-## Authors
-
-- Eric Cheung  
-- Harry Kim  
-_Group 26 – October 2025_
