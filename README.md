@@ -1,10 +1,10 @@
 ## CMPT 371 Mini Project 1: Simple Web Server 
 
-This repository contains the implementation of a minimal HTTP web server written in Python for CMPT 371 (Computer Networks). The server is built from scratch using socket programming (no http.server or other high-level HTTP libraries).
+This repository contains the implementation of a minimal HTTP web server written in Python for CMPT 371. The server is built from scratch using socket programming (no http.server or other high-level HTTP libraries).
 
 ## Key features:
 
-- Handles basic HTTP/1.1 requests (GET).
+- Handles basic HTTP/1.1 GET requests.
 - Generates correct responses for the following status codes:
 
 |Status Code|Title|

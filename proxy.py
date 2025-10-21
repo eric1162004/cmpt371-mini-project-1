@@ -33,6 +33,11 @@ from datetime import datetime
 # `If-Modified-Since: Wed, 18 Oct 2025 10:00:00 GMT`
 from email.utils import formatdate
 
+import itertools
+
+stream_id_gen = itertools.count(1)
+
+
 # The proxy will bind to localhost
 PROXY_HOST = "127.0.0.1"
 
@@ -47,6 +52,9 @@ SERVER_PORT = 8080
 
 # The HTTP version our proxy will use in responses
 VERSION = "HTTP/1.1"
+
+# Socket receive buffer size
+SOCKET_RECV_BUFFER_SIZE = 4096
 
 # The default file to serve when the root path "/" is requested
 DEFAULT_FILE = "test.html"
@@ -153,26 +161,76 @@ def createRequest(headers, cached=None):
     return "\r\n".join(headers) + "\r\n"
 
 
-def receiveResponse(serverSocket):
-    # Receives the full response from the server socket.
-    response = b""
-    
-    # Keep receiving data until the server closes the connection
+# def receiveResponse(serverSocket):
+#    # Receives the full response from the server socket.
+#    response = b""
+
+#    # Keep receiving data until the server closes the connection
+#    while True:
+#        chunk = serverSocket.recv(4096)
+#        if not chunk:
+#            break
+#        response += chunk
+
+#    return response
+
+
+def receiveFramedResponse(serverSocket, expectedStreamId):
+    responseChunks = []
+
     while True:
-        chunk = serverSocket.recv(4096)
+        # Read up to SOCKET_RECV_BUFFER_SIZE bytes from the socket
+        chunk = serverSocket.recv(SOCKET_RECV_BUFFER_SIZE)
         if not chunk:
+            # Connection closed by server
             break
-        response += chunk
-        
-    return response
+
+        try:
+            # Decode the raw bytes into a string frame
+            frame = chunk.decode()
+
+            # Split into stream ID, end flag, and payload
+            sidStr, endStr, payload = frame.split("|", 2)
+
+            # Ignore frames that belong to other streams
+            if int(sidStr) != expectedStreamId:
+                continue
+
+            # Append this frame's payload to the response buffer
+            responseChunks.append(payload)
+
+            # If end flag is set, stop reading further
+            if int(endStr) == 1:
+                break
+
+        except ValueError:
+            # If the chunk doesn't match the framing format,
+            # fall back to returning the raw bytes as-is
+            return chunk
+
+    # Join all collected payloads into a single byte string
+    return "".join(responseChunks).encode()
 
 
 def sendRequest(request):
-    # Sends the request to the server and returns the raw response.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as serverSocket:
-        serverSocket.connect((SERVER_HOST, SERVER_PORT))
-        serverSocket.sendall(request.encode())
-        return receiveResponse(serverSocket)
+    # Generate a unique stream ID for this request (used to distinguish multiple streams).
+    streamId = next(stream_id_gen)
+
+    # Frame the request by prepending the stream ID header.
+    framedRequest = f"STREAM-ID: {streamId}\r\n{request}"
+
+    # Open a TCP socket to the server, send the framed request,
+    # and wait for the corresponding framed response.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Establish a connection to the server at the configured host/port.
+        s.connect((SERVER_HOST, SERVER_PORT))
+
+        # Send the framed request (encoded as bytes).
+        s.sendall(framedRequest.encode())
+
+        # Receive and return the response associated with this stream ID.
+        # The helper function is responsible for parsing and matching frames.
+        return receiveFramedResponse(s, streamId)
 
 
 def handleRequest(request):
@@ -223,8 +281,8 @@ def handleRequest(request):
 def handleClient(conn, addr):
     with conn:
         try:
-            # Receive the client's request (up to 4096 bytes)
-            request = conn.recv(4096).decode()
+            # Receive the client's request (up to SOCKET_RECV_BUFFER_SIZE)
+            request = conn.recv(SOCKET_RECV_BUFFER_SIZE).decode()
 
             print(f"[{addr}] Request:\n{request}")
 

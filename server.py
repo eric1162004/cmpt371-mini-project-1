@@ -13,7 +13,7 @@ Modular handler functions are used to encapsulate response logic for each status
 The server reads static files from the local directory and supports conditional requests
 via the 'If-Modified-Since' header.
 
-Multithreading is used to handle concurrent client connections. 
+Multithreading is used to handle concurrent client connections.
 
 Usage:
 - Run the server: `python3 server.py`
@@ -54,6 +54,12 @@ DEFAULT_FILE = "test.html"
 
 # The private file that should return 403 Forbidden when accessed
 PRVIATE_FILE = "private.html"
+
+# The maximum chunk size for framed responses
+MAX_CHUNK_SIZE = 512
+
+# Socket receive buffer size
+SOCKET_RECV_BUFFER_SIZE = 4096
 
 # Mapping of HTTP status codes to their titles and HTML bodies
 STATUS = {
@@ -195,29 +201,108 @@ def handleRequest(request):
         return handle500(e)
 
 
+def extractStreamIdAndCleanRequest(request):
+    # Split the raw request into individual lines using CRLF as the delimiter
+    lines = request.split("\r\n")
+    stream_id = None
+
+    # Check if the first line contains a STREAM-ID header
+    if lines[0].startswith("STREAM-ID:"):
+        try:
+            # Attempt to parse the numeric stream ID from the header
+            stream_id = int(lines[0].split(":")[1].strip())
+            # Remove the STREAM-ID line so the rest of the request is clean
+            lines = lines[1:]
+        except ValueError:
+            # If parsing fails (non-integer value), treat as no stream ID
+            stream_id = None
+
+    # Reconstruct the request without the STREAM-ID line
+    request_clean = "\r\n".join(lines)
+
+    return stream_id, request_clean
+
+
+def sendFramedResponse(conn, stream_id, response, lock):
+    chunk_size = MAX_CHUNK_SIZE
+
+    # Iterate over the response in increments of chunk_size
+    for i in range(0, len(response), chunk_size):
+        # Extract the current chunk of data
+        chunk = response[i : i + chunk_size]
+
+        # Determine if this is the final chunk (1 = end, 0 = more to come)
+        end_stream = int(i + chunk_size >= len(response))
+
+        # Construct the frame with stream ID, end flag, and chunk payload
+        frame = f"{stream_id}|{end_stream}|{chunk}"
+
+        # Send the encoded frame over the socket
+        with lock:
+            conn.sendall(frame.encode())
+
+
+def sendRegularResponse(conn, response, lock):
+    with lock:
+        conn.sendall(response.encode())
+
+
+def handleRequestThread(conn, request):
+    # Get the current thread ID for logging purposes
+    thread_id = threading.get_ident()
+    print(f"[Thread {thread_id}] Handling connection from client")
+    
+    # Extract stream ID (if present) and clean the request for processing
+    streamId, requestClean = extractStreamIdAndCleanRequest(request)
+
+    # Generate an appropriate response based on the cleaned request
+    response = handleRequest(requestClean)
+
+    # Send response back to client:
+    # If stream ID exists, use framed response (for multiplexed streams)
+    # Otherwise, send a regular HTTP response
+    if streamId is not None:
+        sendFramedResponse(conn, streamId, response)
+    else:
+        sendRegularResponse(conn, response)
+
+
 def handleClient(conn, addr):
     # Get the current thread ID for logging purposes
     thread_id = threading.get_ident()
     print(f"[Thread {thread_id}] Handling connection from {addr}")
-    
+
+    # The socket is automatically closed when the block exits.
     with conn:
-        # Receive up to 1024 bytes of data from the client
-        # Decode from bytes to string (assuming UTF-8 by default)
-        request = conn.recv(1024).decode()
+        buffer = ""  # Accumulate partial data
 
-        print(f"Request from {addr}:\n{request}")
+        while True:
+            # Receive up to SOCKET_RECV_BUFFER_SIZE bytes from the client
+            data = conn.recv(SOCKET_RECV_BUFFER_SIZE)
+            if not data:
+                # Exit loop if client closes the connection
+                break
+            buffer += data.decode()
+            print(buffer)
 
-        # Pass the request string to a handler function
-        # handleRequest() should return a response string
-        response = handleRequest(request)
+            # Process all complete requests currently in the buffer
+            # HTTP requests are separated by a blank line (CRLF CRLF)
+            while "\r\n\r\n" in buffer:
+                # Split off one complete request, leaving the rest in buffer
+                request, buffer = buffer.split("\r\n\r\n", 1)
 
-        # Send the response back to the client, encoded as bytes
-        conn.sendall(response.encode())
+                # Dispatch the request to a new thread for independent handling
+                threading.Thread(
+                    target=handleRequestThread, args=(conn, request)
+                ).start()
 
 
 def startServer():
     # Create a TCP/IP socket using IPv4 addressing
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Allow quickly restart the proxy on the same port
+        # without waiting for the OS to release it.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         # Bind the socket to a specific host and port
         s.bind((HOST, PORT))
@@ -229,9 +314,9 @@ def startServer():
         print(f"Server started at http://{HOST}:{PORT}")
 
         # Continuously accept and handle client requests
-        while 1:
+        while True:
             conn, addr = s.accept()
-            
+
             # Spawn threads to handle multiple clients concurrently
             thread = threading.Thread(target=handleClient, args=(conn, addr))
             thread.start()
