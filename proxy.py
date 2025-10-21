@@ -1,21 +1,45 @@
 """
-CMPT 371 - Mini Project 1: HTTP Proxy Server
+CMPT 371 - Mini Project 1: Multiplexed HTTP/1.1 Proxy Server
 Authors: Eric Cheung, Harry Kim
 MP-Group: 26
 Date: October 29, 2025
 
 Description:
-This Python script implements a minimal HTTP/1.1 proxy server using raw sockets and in-memory caching.
-It intercepts client GET requests, forwards them to the origin server, and relays the response back.
-If the requested file (e.g., test.html) is cached, the proxy sends a conditional GET using the
-'If-Modified-Since' header. If the origin server returns 304 Not Modified, the proxy serves the cached version.
-Otherwise, it updates the cache with the new content and forwards the updated response.
+This Python script implements a multithreaded HTTP/1.1 proxy server using raw sockets.
+It intercepts client GET requests, forwards them to the origin server using a custom
+framing protocol, and relays the framed response back. The proxy supports conditional
+GETs via 'If-Modified-Since' headers and maintains an in-memory cache to reduce redundant
+fetches. It parses framed responses using STREAM-ID headers to support multiplexed streams.
 
-Multithreading is used to handle concurrent client connections.
+Framing Protocol Design:
+Each request and response is encapsulated in a custom frame format to support multiplexing.
+Frames are structured as:
+
+    STREAM-ID|END-FLAG|PAYLOAD
+
+- STREAM-ID: Unique integer identifying the logical stream (e.g., 1, 2, 3, ...)
+- END-FLAG: 1 if this is the final frame for the stream, 0 otherwise
+- PAYLOAD: Raw HTTP request or response content
+
+Example:
+    3|1|HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello
+
+The proxy uses `STREAM-ID` to match responses to requests and supports interleaved delivery.
+
+Key Features:
+- Conditional GET support with cache validation (304 Not Modified)
+- In-memory caching of static files with Last-Modified tracking
+- Custom framing protocol with STREAM-ID headers for multiplexed requests
+- Frame parsing and stream ID matching for response demultiplexing
+- Robust error handling with detailed 500 responses
+- Concurrent client handling via multithreading
+- Modular response construction for HTTP status codes
 
 Usage:
-1. Run the server: `python3 server.py`
-2. Run the proxy: `python3 proxy.py`
+- Start the origin server: `python3 server.py`
+- Start the proxy server: `python3 proxy.py`
+- Default file served: test.html
+- Restricted file: private.html (returns 403)
 
 © 2025 Eric Cheung, Harry Kim. All rights reserved.
 """
@@ -85,15 +109,23 @@ stream_id_gen = itertools.count(1)
 
 
 def createResponse(statusCode, body=b""):
+    """
+    Constructs a raw HTTP/1.1 response in bytes.
+
+    Args:
+        statusCode (int): HTTP status code.
+        body (bytes): Optional HTML body content.
+
+    Returns:
+        bytes: Complete HTTP response.
+    """
     # Build the HTTP status line
     statusLine = f"{VERSION} {statusCode} {STATUS[statusCode]['title']}"
 
-    # Initialize headers dictionary
     headers = {}
     headers["Date"] = formatdate(timeval=None, localtime=False, usegmt=True)
     headers["Server"] = "TestServer/1.0"
 
-    # If there is a body, include Content-Length and Content-Type
     if body:
         headers["Content-Length"] = str(len(body))
         headers["Content-Type"] = "text/html"
@@ -104,12 +136,20 @@ def createResponse(statusCode, body=b""):
     # Combine status line + headers + CRLF separator
     head = f"{statusLine}\r\n{headerLines}\r\n"
 
-    # Return as bytes: headers + body
     return head.encode("utf-8") + body
 
 
 def handle200(filename, response):
-    # Split the raw response into headers and body
+    """
+    Updates cache with new content and returns a 200 OK response.
+
+    Args:
+        filename (str): Name of the requested file.
+        response (bytes): Raw HTTP response from origin server.
+
+    Returns:
+        bytes: HTTP response with updated content.
+    """
     headers, body = response.split(b"\r\n\r\n", 1)
 
     lastModified = None
@@ -121,54 +161,94 @@ def handle200(filename, response):
             lastModified = line.split(b": ", 1)[1].decode()
             break
 
-    # If no Last-Modified header was found, use the current GMT time
     lastModified = lastModified or formatdate(timeval=None, usegmt=True)
 
     # Update the cache with the new content and last modified time
     cache[filename] = {"last_modified": lastModified, "content": body}
 
-    # Return a 200 OK response with the body
     return createResponse(200, body)
 
 
 def handle304(filename):
-    # Retrieve the cached content for the filename
-    cached = cache[filename]
+    """
+    Serves cached content for a 304 Not Modified response.
 
-    # Return a 200 OK response with the cached content
+    Args:
+        filename (str): Name of the requested file.
+
+    Returns:
+        bytes: HTTP response with cached content.
+    """
+    cached = cache[filename]
     return createResponse(200, cached["content"])
 
 
 def handle505():
-    # Return a 505 HTTP Version Not Supported response with the predefined HTML body
+    """
+    Returns a 505 HTTP Version Not Supported response.
+
+    Returns:
+        bytes: HTTP response with predefined 505 HTML body.
+    """
     msg = STATUS[505]["body"].encode()
     return createResponse(505, msg)
 
 
 def handle500(error):
-    msg = STATUS[500]["body"]
+    """
+    Returns a 500 Internal Server Error response with error details.
 
-    # Append the error details inside a <p> tag for debugging
+    Args:
+        error (Exception): Exception object to include in response.
+
+    Returns:
+        bytes: HTTP response with embedded error message.
+    """
+    msg = STATUS[500]["body"]
     msg += f"<p>{error}</p>"
     msg = msg.encode()
-
-    # Return a 500 Internal Server Error response with details
     return createResponse(500, msg)
 
 
 def createRequest(headers, cached=None):
-    # Builds the proxy request string with optional cache headers.
+    """
+    Builds a proxy request string with optional 'If-Modified-Since' header.
+
+    Args:
+        headers (list): List of HTTP header lines.
+        cached (dict, optional): Cached metadata with 'last_modified' timestamp.
+
+    Returns:
+        str: Complete HTTP request string.
+    """
     if cached:
         headers.append(f"If-Modified-Since: {cached['last_modified']}")
     return "\r\n".join(headers) + "\r\n\r\n"
 
 
 def hasCompleteFrame(buffer):
-    # Check if buffer has at least two '|' delimiters
+    """
+    Checks if the buffer contains a complete frame (two '|' delimiters).
+
+    Args:
+        buffer (str): Incoming data buffer.
+
+    Returns:
+        bool: True if a complete frame is present.
+    """
     return buffer.count("|") >= 2
 
 
 def extractFrame(buffer):
+    """
+    Extracts a single frame from the buffer.
+
+    Args:
+        buffer (str): Incoming data buffer.
+
+    Returns:
+        tuple: (frame: str or None, updated_buffer: str)
+    """
     try:
         sidStr, endStr, rest = buffer.split("|", 2)
         return f"{sidStr}|{endStr}|{rest}", ""  # Frame isolated, buffer cleared
@@ -177,6 +257,15 @@ def extractFrame(buffer):
 
 
 def parseFrame(frame):
+    """
+    Parses a frame into stream ID, end flag, and payload.
+
+    Args:
+        frame (str): Raw frame string.
+
+    Returns:
+        tuple: (stream_id: int or None, end_flag: int or None, payload: str)
+    """
     try:
         sidStr, endStr, payload = frame.split("|", 2)
         return int(sidStr), int(endStr), payload
@@ -185,6 +274,16 @@ def parseFrame(frame):
 
 
 def receiveFramedResponse(serverSocket, expectedStreamId):
+    """
+    Receives and assembles framed response from origin server.
+
+    Args:
+        serverSocket (socket.socket): Connected socket to origin server.
+        expectedStreamId (int): Stream ID to match frames.
+
+    Returns:
+        bytes: Reconstructed HTTP response payload.
+    """
     buffer = ""
     responseChunks = []
 
@@ -215,7 +314,16 @@ def receiveFramedResponse(serverSocket, expectedStreamId):
 
 
 def sendRequest(request):
-    # Generate a unique stream ID for this request (used to distinguish multiple streams).
+    """
+    Sends a framed request to the origin server and receives the response.
+
+    Args:
+        request (str): Raw HTTP request string.
+
+    Returns:
+        bytes: Framed response from origin server.
+    """
+    # Generate a unique stream ID
     streamId = next(stream_id_gen)
 
     # Frame the request by prepending the stream ID header.
@@ -224,20 +332,24 @@ def sendRequest(request):
     # Open a TCP socket to the server, send the framed request,
     # and wait for the corresponding framed response.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # Establish a connection to the server at the configured host/port.
         s.connect((SERVER_HOST, SERVER_PORT))
 
-        # Send the framed request (encoded as bytes).
         s.sendall(framedRequest.encode())
 
-        # Receive and return the response associated with this stream ID.
-        # The helper function is responsible for parsing and matching frames.
         return receiveFramedResponse(s, streamId)
 
 
 def handleRequest(request):
+    """
+    Parses client request, applies caching logic, and returns appropriate response.
+
+    Args:
+        request (str): Raw HTTP request from client.
+
+    Returns:
+        bytes: HTTP response to send back to client.
+    """
     try:
-        # Split the raw HTTP request into lines using CRLF
         lines = request.split("\r\n")
 
         # The first line of an HTTP request is the request line: METHOD PATH VERSION
@@ -280,9 +392,18 @@ def handleRequest(request):
 
 
 def handleClient(conn, addr):
+    """
+    Handles a client connection and sends back the appropriate response.
+
+    Args:
+        conn (socket.socket): Client connection socket.
+        addr (tuple): Client address.
+
+    Returns:
+        None
+    """
     with conn:
         try:
-            # Receive the client's request (up to SOCKET_RECV_BUFFER_SIZE)
             request = conn.recv(SOCKET_RECV_BUFFER_SIZE).decode()
             print(f"[{addr}] Client Request:\n{request}")
 
@@ -294,26 +415,31 @@ def handleClient(conn, addr):
 
 
 def startProxy():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as p:
+    """
+    Starts the proxy server, listens for incoming connections, and spawns threads to handle clients.
+
+    Returns:
+        None
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         # Allow quickly restart the proxy on the same port
         # without waiting for the OS to release it.
-        p.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         # Bind the proxy to the specified host and port
-        p.bind((PROXY_HOST, PROXY_PORT))
+        s.bind((PROXY_HOST, PROXY_PORT))
 
         # Start listening for incoming connections
-        p.listen()
+        s.listen()
 
         print(f"Proxy started at http://{PROXY_HOST}:{PROXY_PORT}\n")
 
         while True:
             # Accept a new client connection
-            conn, addr = p.accept()
+            conn, addr = s.accept()
             # Handle the client connection in a new thread
             threading.Thread(target=handleClient, args=(conn, addr)).start()
 
 
-# Start the proxy server when this script is run directly
 if __name__ == "__main__":
     startProxy()

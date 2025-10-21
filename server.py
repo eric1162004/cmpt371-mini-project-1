@@ -1,22 +1,44 @@
 """
-CMPT 371 - Mini Project 1: HTTP Web Server
+CMPT 371 - Mini Project 1: Multiplexed HTTP/1.1 Web Server
 Authors: Eric Cheung, Harry Kim
 MP-Group: 26
 Date: October 29, 2025
 
 Description:
-This Python script implements a minimal HTTP/1.1 web server using raw sockets.
-It handles basic GET requests and returns appropriate HTTP status codes:
-200 OK, 304 Not Modified, 403 Forbidden, 404 Not Found, and 505 HTTP Version Not Supported.
+This Python script implements a multithreaded HTTP/1.1 web server using raw sockets.
+It supports both regular and multiplexed request handling via a custom framing protocol
+using STREAM-ID headers. The server handles basic GET requests and conditional requests
+via the 'If-Modified-Since' header, returning appropriate status codes:
+200 OK, 304 Not Modified, 403 Forbidden, 404 Not Found, 500 Internal Server Error,
+and 505 HTTP Version Not Supported.
 
-Modular handler functions are used to encapsulate response logic for each status code.
-The server reads static files from the local directory and supports conditional requests
-via the 'If-Modified-Since' header.
+Framing Protocol (used for multiplexed responses):
+Each response is split into frames of the form:
 
-Multithreading is used to handle concurrent client connections.
+    STREAM-ID|END-FLAG|PAYLOAD
+
+- STREAM-ID: Unique identifier for the logical stream
+- END-FLAG: 1 if final frame, 0 otherwise
+- PAYLOAD: Chunk of HTTP response
+
+Example:
+    2|0|HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHe
+    2|1|llo
+
+See proxy.py for full framing protocol documentation.
+
+Key Features:
+- Modular response handlers for each HTTP status code
+- Conditional GET support using file modification timestamps
+- Framed response delivery for multiplexed streams
+- Thread-safe socket communication using locks
+- Concurrent client handling via multithreading
+- Static file serving from a local directory with access control
 
 Usage:
 - Run the server: `python3 server.py`
+- Default file served: test.html
+- Restricted file: private.html (returns 403)
 
 © 2025 Eric Cheung, Harry Kim. All rights reserved.
 """
@@ -79,23 +101,27 @@ STATUS = {
 
 
 def createResponse(statusCode, body=""):
+    """
+    Constructs a raw HTTP/1.1 response string.
+
+    Args:
+        statusCode (int): HTTP status code (e.g., 200, 404).
+        body (str): Optional HTML body content.
+
+    Returns:
+        str: Complete HTTP response including headers and body.
+    """
     # Build the HTTP status line: e.g. "HTTP/1.1 200 OK"
     statusLine = f"{VERSION} {statusCode} {STATUS[statusCode]['title']}\r\n"
 
-    # Initialize headers dictionary
     headers = {}
-
-    # Add headers
     headers.setdefault("Date", formatdate(timeval=None, localtime=False, usegmt=True))
     headers.setdefault("Server", "TestServer/1.0")
 
-    # If there is a body, include Content-Length and Content-Type
     if body:
         headers["Content-Length"] = str(len(body))
         headers["Content-Type"] = "text/html"
 
-    # Convert headers dict into properly formatted HTTP header lines
-    # Each header must end with CRLF
     headerLines = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
 
     # Final response: status line + headers + blank line + body
@@ -103,18 +129,36 @@ def createResponse(statusCode, body=""):
 
 
 def handle200(filePath):
-    # Open the requested file in read mode
-    # Read its entire contents into 'body'
+    """
+    Reads the requested file and returns a 200 OK HTTP response.
+
+    Args:
+        filePath (str): Absolute path to the requested file.
+
+    Returns:
+        str: HTTP response with file contents as the body.
+    """
     with open(filePath, "r") as f:
         body = f.read()
     return createResponse(200, body)
 
 
 def handle304(filePath, headerLine):
+    """
+    Handles conditional GET requests using 'If-Modified-Since'.
+
+    Args:
+        filePath (str): Path to the requested file.
+        headerLine (str): Raw header line containing the timestamp.
+
+    Returns:
+        str or None: 304 response if not modified, else None.
+    """
     # Parse the "If-Modified-Since" header value into a datetime object~
     clientTime = datetime.strptime(
         headerLine.split(": ", 1)[1], "%a, %d %b %Y %H:%M:%S GMT"
     )
+
     # Get the file's last modification time (UTC)
     fileLastModifiedTime = datetime.utcfromtimestamp(os.path.getmtime(filePath))
 
@@ -128,33 +172,52 @@ def handle304(filePath, headerLine):
 
 
 def handle403():
-    # Return a 403 Forbidden response with the predefined HTML body
+    """
+    Returns a 403 Forbidden HTTP response.
+
+    Returns:
+        str: HTTP response with predefined 403 HTML body.
+    """
     return createResponse(403, STATUS[403]["body"])
 
 
 def handle404():
-    # Return a 404 Not Found response with the predefined HTML body
+    """
+    Returns a 404 Not Found HTTP response.
+
+    Returns:
+        str: HTTP response with predefined 404 HTML body.
+    """
     return createResponse(404, STATUS[404]["body"])
 
 
 def handle505():
-    # Return a 505 HTTP Version Not Supported response with the predefined HTML body
+    """
+    Returns a 505 HTTP Version Not Supported response.
+
+    Returns:
+        str: HTTP response with predefined 505 HTML body.
+    """
     return createResponse(505, STATUS[505]["body"])
 
 
 def handle500(error):
+    """
+    Returns a 500 Internal Server Error response with error details.
+
+    Args:
+        error (Exception): Exception object to include in response.
+
+    Returns:
+        str: HTTP response with embedded error message.
+    """
     msg = STATUS[500]["body"]
-
-    # Append the error details inside a <p> tag for debugging
     msg += f"<p>{error}</p>"
-
-    # Return a 500 Internal Server Error response with details
     return createResponse(500, msg)
 
 
 def handleRequest(request):
     try:
-        # Split the raw HTTP request into lines using CRLF
         lines = request.split("\r\n")
 
         # The first line of an HTTP request is the request line: METHOD PATH VERSION
@@ -201,7 +264,15 @@ def handleRequest(request):
 
 
 def extractStreamIdAndCleanRequest(request):
-    # Split the raw request into individual lines using CRLF as the delimiter
+    """
+    Extracts STREAM-ID from framed request and returns cleaned HTTP request.
+
+    Args:
+        request (str): Raw framed request string.
+
+    Returns:
+        tuple: (stream_id: int or None, cleaned_request: str)
+    """
     lines = request.split("\r\n")
     stream_id = None
 
@@ -223,6 +294,18 @@ def extractStreamIdAndCleanRequest(request):
 
 
 def sendFramedResponse(conn, stream_id, response, lock):
+    """
+    Sends a framed HTTP response over the socket using STREAM-ID protocol.
+
+    Args:
+        conn (socket.socket): Client connection socket.
+        stream_id (int): Logical stream identifier.
+        response (str): Raw HTTP response string.
+        lock (threading.Lock): Lock for thread-safe socket access.
+
+    Returns:
+        None
+    """
     # Iterate over the response in increments of chunk size
     for i in range(0, len(response), MAX_CHUNK_SIZE):
         # Extract the current chunk of data
@@ -243,11 +326,33 @@ def sendFramedResponse(conn, stream_id, response, lock):
 
 
 def sendRegularResponse(conn, response, lock):
+    """
+    Sends a standard HTTP response over the socket.
+
+    Args:
+        conn (socket.socket): Client connection socket.
+        response (str): Raw HTTP response string.
+        lock (threading.Lock): Lock for thread-safe socket access.
+
+    Returns:
+        None
+    """
     with lock:
         conn.sendall(response.encode())
 
 
 def handleRequestThread(conn, request, lock):
+    """
+    Processes a single HTTP request in a dedicated thread.
+
+    Args:
+        conn (socket.socket): Client connection socket.
+        request (str): Raw HTTP request string.
+        lock (threading.Lock): Lock for synchronized socket access.
+
+    Returns:
+        None
+    """
     print(request)
 
     # Extract stream ID (if present) and clean the request for processing
@@ -266,6 +371,16 @@ def handleRequestThread(conn, request, lock):
 
 
 def handleClient(conn, addr):
+    """
+    Handles a client connection, dispatching each request to a separate thread.
+
+    Args:
+        conn (socket.socket): Client connection socket.
+        addr (tuple): Client address (IP, port).
+
+    Returns:
+        None
+    """
     # Get the current thread ID for logging purposes
     thread_id = threading.get_ident()
     print(f"[Thread {thread_id}] Handling connection from {addr}")
@@ -309,6 +424,12 @@ def handleClient(conn, addr):
 
 
 def startServer():
+    """
+    Starts the HTTP server, listens for incoming connections, and spawns threads to handle clients.
+
+    Returns:
+        None
+    """
     # Create a TCP/IP socket using IPv4 addressing
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         # Allow quickly restart the proxy on the same port
