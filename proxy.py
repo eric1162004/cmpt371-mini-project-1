@@ -33,9 +33,8 @@ from datetime import datetime
 # `If-Modified-Since: Wed, 18 Oct 2025 10:00:00 GMT`
 from email.utils import formatdate
 
+# For generating an infinite stream of unique stream IDs using count().
 import itertools
-
-stream_id_gen = itertools.count(1)
 
 
 # The proxy will bind to localhost
@@ -80,6 +79,9 @@ STATUS = {
 
 # In-memory cache: {filename: {"last_modified": str, "content": bytes}}
 cache = {}
+
+# Used to tag each proxied request for multiplexed framing.
+stream_id_gen = itertools.count(1)
 
 
 def createResponse(statusCode, body=b""):
@@ -159,20 +161,6 @@ def createRequest(headers, cached=None):
     if cached:
         headers.append(f"If-Modified-Since: {cached['last_modified']}")
     return "\r\n".join(headers) + "\r\n\r\n"
-
-
-# def receiveResponse(serverSocket):
-#    # Receives the full response from the server socket.
-#    response = b""
-
-#    # Keep receiving data until the server closes the connection
-#    while True:
-#        chunk = serverSocket.recv(4096)
-#        if not chunk:
-#            break
-#        response += chunk
-
-#    return response
 
 
 def hasCompleteFrame(buffer):
@@ -296,6 +284,7 @@ def handleClient(conn, addr):
         try:
             # Receive the client's request (up to SOCKET_RECV_BUFFER_SIZE)
             request = conn.recv(SOCKET_RECV_BUFFER_SIZE).decode()
+            print(f"[{addr}] Client Request:\n{request}")
 
             response = handleRequest(request)
             conn.sendall(response)
@@ -316,7 +305,7 @@ def startProxy():
         # Start listening for incoming connections
         p.listen()
 
-        print(f"Proxy started at http://{PROXY_HOST}:{PROXY_PORT}")
+        print(f"Proxy started at http://{PROXY_HOST}:{PROXY_PORT}\n")
 
         while True:
             # Accept a new client connection

@@ -58,7 +58,7 @@ PRVIATE_FILE = "private.html"
 # The maximum chunk size for framed responses
 MAX_CHUNK_SIZE = 1024
 
-# Socket receive buffer size
+# Socket receive buffer size (Buffer size must be grerater than MAX_CHUNK_SIZE)
 SOCKET_RECV_BUFFER_SIZE = 4096
 
 # Mapping of HTTP status codes to their titles and HTML bodies
@@ -305,7 +305,7 @@ def handleClient(conn, addr):
         for t in threads:
             t.join()
             
-        print(f"[Thread {thread_id}] Connection from {addr} closed.")
+        print(f"[Thread {thread_id}] Connection from {addr} closed.\n")
 
 
 def startServer():
@@ -322,7 +322,7 @@ def startServer():
         # so it can accept incoming connections
         s.listen()
 
-        print(f"Server started at http://{HOST}:{PORT}")
+        print(f"Server started at http://{HOST}:{PORT}\n")
 
         # Continuously accept and handle client requests
         while True:
