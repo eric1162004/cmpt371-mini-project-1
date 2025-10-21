@@ -237,7 +237,7 @@ def sendFramedResponse(conn, stream_id, response, lock):
         # Send the encoded frame over the socket
         try:
             with lock:
-                conn.sendall(response.encode())
+                conn.sendall(frame.encode())
         except (BrokenPipeError, OSError) as e:
             print(f"[Thread {threading.get_ident()}] Failed to send response: {e}")
 
