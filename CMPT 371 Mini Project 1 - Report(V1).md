@@ -1,3 +1,18 @@
+# CMPT 371 Mini Project 1: HTTP Server and Proxy Implementation Report
+
+**Group Number:** 26  
+**Team Members:** Eric Cheung, Harry Kim  
+**Submission Date:** October 29, 2025  
+**Instructor:** Dr. Baghban Karimi 
+
+---
+
+## Introduction
+
+This report presents the design and implementation of a minimal HTTP/1.1 server with proxy support, developed for CMPT 371 – Computer Communications at Simon Fraser University. The project explores key networking concepts such as socket programming, request parsing, multiplexed proxy forwarding, and thread-safe concurrency. Our goal was to build a modular, maintainable system that adheres to protocol standards while remaining robust under edge-case conditions.
+
+The submission ZIP file contains all necessary components to build, run, and evaluate the project. Specifically, it includes two Python programs (server.py and proxy.py), two HTML files for testing (test.html and private.html), a Markdown README (README.md) with setup instructions and design overview, and the final report in PDF format (Report.pdf).
+
 ## 1. Status Code Generation Logic
 
 The server implementation supports a limited but representative set of HTTP/1.1 status codes. Each code is generated under specific request conditions, tied to the method in use and the relevant portion of the client’s message (Fielding & Reschke, 2014). The following subsections describe the logic for each supported status code.
@@ -112,7 +127,9 @@ Host: 127.0.0.1:8080
     ```
     
 
-**Expected Result:** The contents of `test.html` were displayed in the browser window. **Evidence:** ![Browser_Test](./images/BrowserTest.png)
+**Expected Result:** The contents of `test.html` were displayed in the browser window. 
+
+**Evidence:** ![Browser_Test](./images/BrowserTest.png)
 
 ### 3.1 Command‑Line Testing with `curl`
 
@@ -302,6 +319,7 @@ We used `curl` with the `--proxy` option to explicitly route requests through th
     < Content-Type: text/html
     ```
     This is due to the 304 error being caught by the proxy, and providing its cached copy with 200 OK.
+
     **Evidence:**
     ![proxy304](./images/proxy304.png)
     
