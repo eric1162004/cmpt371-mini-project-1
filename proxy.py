@@ -60,6 +60,8 @@ from email.utils import formatdate
 # For generating an infinite stream of unique stream IDs using count().
 import itertools
 
+# To parse absolute urls for compatability with the curl --proxy option.
+from urllib.parse import urlparse
 
 # The proxy will bind to localhost
 PROXY_HOST = "127.0.0.1"
@@ -326,9 +328,30 @@ def sendRequest(request):
     # Generate a unique stream ID
     streamId = next(stream_id_gen)
 
-    # Frame the request by prepending the stream ID header.
-    framedRequest = f"STREAM-ID: {streamId}\r\n{request}"
+    # Parse the request line (first line)
+    lines = request.split("\r\n")
+    if not lines:
+        return b""
+    
+    request_line = lines[0]
+    parts = request_line.split(" ")
 
+    if len(parts) >= 3 and parts[0].startswith("GET"):
+        method, uri, version = parts[:3]
+        uri = uri.strip().replace("\r", "")
+        parsed = urlparse(uri)
+        if parsed.scheme in ["http"] and parsed.netloc:
+            new_uri = parsed.path or "/"
+            if parsed.query:
+                new_uri += "?" + parsed.query
+            lines[0] = f"{method} {new_uri} {version}"
+
+    # Reconstruct the request
+    fixedRequest = "\r\n".join(lines)
+
+    # Frame the request by prepending the stream ID header.
+    framedRequest = f"STREAM-ID: {streamId}\r\n{fixedRequest}"
+    
     # Open a TCP socket to the server, send the framed request,
     # and wait for the corresponding framed response.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

@@ -54,28 +54,4 @@ python3 proxy.py
 
 ## Testing Instructions
 
-### Browser Testing
-
-- Place `test.html` in the same directory.
-- Navigate to: `http://127.0.0.1:8080/test.html` (direct) or configure browser to use proxy at `127.0.0.1:8081` and visit same URL.
-
-### Terminal Testing
-
-```
-# 200 OK
-curl -v http://127.0.0.1:8080/test.html
-
-# 404 Not Found
-curl -v http://127.0.0.1:8080/missing.html
-
-# 403 Forbidden
-curl -v http://127.0.0.1:8080/private.html
-
-# 304 Not Modified
-curl -v -H "If-Modified-Since: Wed, 18 Oct 2025 10:00:00 GMT" http://127.0.0.1:8080/test.html
-
-# 505 HTTP Version Not Supported
-printf "GET /test.html HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" | nc 127.0.0.1 8080
-```
-
-To test via proxy, add `--proxy 127.0.0.1:8081` to each `curl` command.
+Please refer to the [Mini Project Report](./CMPT%20371%20Mini%20Project%201%20-%20Report(V1).md).
