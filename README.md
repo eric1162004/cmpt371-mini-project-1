@@ -9,8 +9,6 @@ This repository contains two Python programs developed for CMPT 371:
 
 Both components are designed to demonstrate core networking principles, including socket programming, status code handling, concurrency, and head-of-line (HOL) blocking mitigation.
 
-All design specfication and testing evidence are available in the [Project Documentation Repository](https://1sfu-my.sharepoint.com/:f:/g/personal/hccheung_sfu_ca/EhXuUQntbspIpA6dXq50MMgBR2rVAXpNZdv7SmHtdBoSvg).
-
 ## Status Code Coverage
 
 | Code | Meaning                    | Trigger Condition                     |
